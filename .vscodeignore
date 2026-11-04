@@ -1,0 +1,9 @@
+**/.git/**
+**/.vscode/**
+node_modules/**/test/**
+node_modules/**/*.map
+src/**
+*.ts
+inspect-*.js
+*.txt
+README.md

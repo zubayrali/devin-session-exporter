@@ -1,0 +1,182 @@
+{
+  "name": "devin-session-exporter",
+  "displayName": "Devin Session Exporter",
+  "description": "Export selected Devin Desktop sessions to Markdown and JSON.",
+  "version": "0.1.0",
+  "publisher": "local-tools",
+  "license": "MIT",
+  "engines": { "vscode": "^1.85.0" },
+  "categories": ["Other"],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      { "command": "devinExporter.scanAndExport", "title": "Devin Export: Scan Sessions and Export" },
+      { "command": "devinExporter.exportSelected", "title": "Devin Export: Export Selected Sessions" },
+      { "command": "devinExporter.configureExport", "title": "Devin Export: Configure Export Content and Naming" },
+      { "command": "devinExporter.refreshSessions", "title": "Devin Export: Refresh Sessions", "icon": "$(refresh)" },
+      { "command": "devinExporter.exportSession", "title": "Devin Export: Export Session", "icon": "$(export)" },
+      { "command": "devinExporter.exportAll", "title": "Devin Export: Export All Sessions", "icon": "$(export)" },
+      { "command": "devinExporter.searchMessages", "title": "Devin Export: Search Messages", "icon": "$(search)" },
+      { "command": "devinExporter.previewSession", "title": "Devin Export: Preview Session", "icon": "$(open-preview)" },
+      { "command": "devinExporter.copySessionId", "title": "Devin Export: Copy Session ID" },
+      { "command": "devinExporter.revealDatabase", "title": "Devin Export: Reveal Database in Explorer" },
+      { "command": "devinExporter.toggleSetting", "title": "Devin Export: Toggle Setting" },
+      { "command": "devinExporter.editSetting", "title": "Devin Export: Edit Setting" },
+      { "command": "devinExporter.openFolder", "title": "Devin Export: Open Export Folder" }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        { "id": "devin-session-exporter", "title": "Devin Sessions", "icon": "media/icon.svg" }
+      ]
+    },
+    "views": {
+      "devin-session-exporter": [
+        { "id": "devinSessionExporter.sessions", "name": "Devin Sessions", "icon": "$(comment-discussion)" },
+        { "id": "devinSessionExporter.settings", "name": "操作与设置", "icon": "$(gear)" }
+      ]
+    },
+    "menus": {
+      "commandPalette": [
+        { "command": "devinExporter.toggleSetting", "when": "false" },
+        { "command": "devinExporter.editSetting", "when": "false" }
+      ],
+      "view/title": [
+        {
+          "command": "devinExporter.refreshSessions",
+          "when": "view == devinSessionExporter.sessions",
+          "group": "navigation"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "devinExporter.exportSession",
+          "when": "view == devinSessionExporter.sessions && viewItem == devinSession",
+          "group": "inline"
+        },
+        {
+          "command": "devinExporter.previewSession",
+          "when": "view == devinSessionExporter.sessions && viewItem == devinSession",
+          "group": "inline"
+        },
+        {
+          "command": "devinExporter.copySessionId",
+          "when": "view == devinSessionExporter.sessions && viewItem == devinSession",
+          "group": "1_actions"
+        },
+        {
+          "command": "devinExporter.revealDatabase",
+          "when": "view == devinSessionExporter.sessions && viewItem == devinSession",
+          "group": "1_actions"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "Devin Session Exporter",
+      "properties": {
+        "devinExporter.databaseDirectory": {
+          "type": "string",
+          "default": "",
+          "description": "Optional directory containing Devin ACP message .db files. Leave blank to auto-detect."
+        },
+        "devinExporter.exportDirectory": {
+          "type": "string",
+          "default": "",
+          "description": "Export directory. Leave blank to use Documents/Devin-Exports."
+        },
+        "devinExporter.includeUser": {
+          "type": "boolean",
+          "default": true,
+          "description": "Include user_message records. Enabled by default."
+        },
+        "devinExporter.includeAssistant": {
+          "type": "boolean",
+          "default": true,
+          "description": "Include agent_message records. Enabled by default."
+        },
+        "devinExporter.includeThoughts": {
+          "type": "boolean",
+          "default": false,
+          "description": "Include agent_thought records. Disabled by default."
+        },
+        "devinExporter.includeToolCalls": {
+          "type": "boolean",
+          "default": false,
+          "description": "Include tool_call records. Disabled by default."
+        },
+        "devinExporter.includeUnknown": {
+          "type": "boolean",
+          "default": false,
+          "description": "Include unrecognized message kinds as raw JSON. Disabled by default."
+        },
+        "devinExporter.filenameTemplate": {
+          "type": "string",
+          "default": "{sessionId}",
+          "description": "Output filename without extension. Tokens: {sessionId}, {date}, {index}, {name}."
+        },
+        "devinExporter.writeMarkdown": {
+          "type": "boolean",
+          "default": true,
+          "description": "Write Markdown output."
+        },
+        "devinExporter.writeHtml": {
+          "type": "boolean",
+          "default": false,
+          "description": "Write a self-contained HTML page output."
+        },
+        "devinExporter.writeJson": {
+          "type": "boolean",
+          "default": true,
+          "description": "Write JSON output."
+        },
+        "devinExporter.showSessionInfo": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show Session ID and message count at the top of exported Markdown."
+        },
+        "devinExporter.showRoleHeading": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show a heading (## 用户 / ## Devin) before each message in exported Markdown."
+        },
+        "devinExporter.showTimestamp": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show message timestamps in exported Markdown."
+        },
+        "devinExporter.userLabel": {
+          "type": "string",
+          "default": "用户",
+          "description": "Display name for user messages in exported Markdown."
+        },
+        "devinExporter.assistantLabel": {
+          "type": "string",
+          "default": "Devin",
+          "description": "Display name for assistant messages in exported Markdown."
+        },
+        "devinExporter.incrementalExport": {
+          "type": "boolean",
+          "default": false,
+          "description": "Skip sessions that have no new messages since the last export."
+        },
+        "devinExporter.forceExportWal": {
+          "type": "boolean",
+          "default": false,
+          "description": "Also export sessions whose database has uncommitted WAL data (content may be stale). Disabled by default."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "vscode:prepublish": "npm run compile"
+  },
+  "dependencies": { "sql.js": "^1.13.0" },
+  "devDependencies": {
+    "@types/node": "^20.17.0",
+    "@types/sql.js": "^1.4.9",
+    "@types/vscode": "^1.85.0",
+    "@vscode/vsce": "^2.26.1",
+    "typescript": "^5.7.2"
+  }
+}
