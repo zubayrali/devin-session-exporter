@@ -41,5 +41,4 @@ export interface ExportOptions {
   userLabel: string;
   assistantLabel: string;
   incremental: boolean;
-  forceExportWal: boolean;
 }

@@ -1,14 +1,25 @@
 import * as fs from "node:fs";
-import initSqlJs, { Database } from "sql.js";
 import { ExportMessage, ExportRole } from "./types";
 
-let sqlPromise: ReturnType<typeof initSqlJs> | undefined;
+// Node ≥22 built-in SQLite: reads the live database including unflushed WAL
+// data, which is where the newest messages of an active session live.
+const { DatabaseSync } = require("node:sqlite") as {
+  DatabaseSync: new (
+    location: string,
+    options?: { readOnly?: boolean }
+  ) => {
+    prepare(sql: string): {
+      all(...args: unknown[]): Record<string, unknown>[];
+      get(...args: unknown[]): Record<string, unknown> | undefined;
+    };
+    close(): void;
+  };
+};
 
-function getSql() {
-  if (!sqlPromise) {
-    sqlPromise = initSqlJs({ locateFile: file => require.resolve(`sql.js/dist/${file}`) });
-  }
-  return sqlPromise;
+type Db = InstanceType<typeof DatabaseSync>;
+
+function openDb(dbPath: string): Db {
+  return new DatabaseSync(dbPath, { readOnly: true });
 }
 
 function roleFor(kind: string): ExportRole {
@@ -53,20 +64,21 @@ function firstTimestamp(payload: any): string | undefined {
   return typeof nested === "string" ? nested : undefined;
 }
 
-function listTables(db: Database): string[] {
-  const result = db.exec("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'");
-  return result[0]?.values.map(row => String(row[0])) ?? [];
+function listTables(db: Db): string[] {
+  const rows = db.prepare(
+    "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
+  ).all();
+  return rows.map(row => String(row.name));
 }
 
-function readTitle(db: Database): string | undefined {
+function readTitle(db: Db): string | undefined {
   for (const table of listTables(db)) {
     if (!/meta|info/i.test(table)) continue;
     try {
       const safe = table.replace(/"/g, '""');
-      const result = db.exec(`SELECT * FROM "${safe}" LIMIT 100`);
-      if (!result[0]) continue;
-      for (const values of result[0].values) {
-        for (const value of values) {
+      const rows = db.prepare(`SELECT * FROM "${safe}" LIMIT 100`).all();
+      for (const row of rows) {
+        for (const value of Object.values(row)) {
           let obj: unknown = value;
           if (typeof value === "string") {
             try { obj = JSON.parse(value); } catch { continue; }
@@ -82,24 +94,27 @@ function readTitle(db: Database): string | undefined {
   return undefined;
 }
 
+function requireMessagesTable(db: Db) {
+  const row = db.prepare(
+    "SELECT name FROM sqlite_master WHERE type='table' AND name='messages'"
+  ).get();
+  if (!row) throw new Error("messages table not found in database");
+}
+
 export async function readSession(dbPath: string): Promise<{ messages: ExportMessage[]; title?: string }> {
-  const SQL = await getSql();
-  const bytes = await fs.promises.readFile(dbPath);
-  const db = new SQL.Database(bytes);
+  const db = openDb(dbPath);
   try {
-    const tableCheck = db.exec("SELECT name FROM sqlite_master WHERE type='table' AND name='messages'");
-    if (!tableCheck.length || !tableCheck[0].values.length) {
-      throw new Error("数据库中不存在 messages 表");
-    }
-    const result = db.exec("SELECT position, kind, payload FROM messages ORDER BY position");
+    requireMessagesTable(db);
     const title = readTitle(db);
-    if (!result.length) return { messages: [], title };
+    const rows = db.prepare(
+      "SELECT position, kind, payload FROM messages ORDER BY position"
+    ).all();
     const messages: ExportMessage[] = [];
-    for (const row of result[0].values) {
-      const position = Number(row[0]);
-      const kind = String(row[1] ?? "");
+    for (const row of rows) {
+      const position = Number(row.position);
+      const kind = String(row.kind ?? "");
       let payload: any;
-      try { payload = JSON.parse(String(row[2] ?? "")); }
+      try { payload = JSON.parse(String(row.payload ?? "")); }
       catch { continue; }
 
       const role = roleFor(kind);
@@ -135,34 +150,32 @@ export async function scanSessionMeta(dbPath: string): Promise<{
   snippet?: string;
   hasWal: boolean;
 }> {
-  const SQL = await getSql();
-  const [bytes, stat, walStat] = await Promise.all([
-    fs.promises.readFile(dbPath),
-    fs.promises.stat(dbPath),
-    fs.promises.stat(`${dbPath}-wal`).catch(() => undefined)
-  ]);
-  const db = new SQL.Database(bytes);
+  const db = openDb(dbPath);
   try {
-    const tableCheck = db.exec("SELECT name FROM sqlite_master WHERE type='table' AND name='messages'");
-    if (!tableCheck.length || !tableCheck[0].values.length) {
-      throw new Error("数据库中不存在 messages 表");
-    }
-    const result = db.exec("SELECT kind, COUNT(*) FROM messages GROUP BY kind");
+    requireMessagesTable(db);
     const counts: Record<string, number> = {};
     let total = 0;
-    for (const row of result[0]?.values ?? []) {
-      counts[String(row[0])] = Number(row[1]);
-      total += Number(row[1]);
+    for (const row of db.prepare(
+      "SELECT kind, COUNT(*) AS n FROM messages GROUP BY kind"
+    ).all()) {
+      counts[String(row.kind)] = Number(row.n);
+      total += Number(row.n);
     }
     let snippet: string | undefined;
-    const firstRow = db.exec("SELECT payload FROM messages WHERE kind='user_message' ORDER BY position LIMIT 1");
-    const raw = firstRow[0]?.values[0]?.[0];
+    const firstRow = db.prepare(
+      "SELECT payload FROM messages WHERE kind='user_message' ORDER BY position LIMIT 1"
+    ).get();
+    const raw = firstRow?.payload;
     if (typeof raw === "string") {
       try {
         const text = extractText(JSON.parse(raw)).replace(/\s+/g, " ").trim();
         if (text) snippet = text.slice(0, 60);
       } catch { /* malformed payload */ }
     }
+    const [stat, walStat] = await Promise.all([
+      fs.promises.stat(dbPath),
+      fs.promises.stat(`${dbPath}-wal`).catch(() => undefined)
+    ]);
     return {
       title: readTitle(db),
       userCount: counts["user_message"] ?? 0,

@@ -9,7 +9,12 @@ import { SettingsProvider, boolSettingDefault } from "./settingsView";
 
 let cachedSessions: SessionInfo[] = [];
 let extensionContext: vscode.ExtensionContext;
+let logChannel: vscode.OutputChannel | undefined;
 const CONFIGURED_KEY = "devinExporter.preferencesConfigured";
+
+function log(): vscode.OutputChannel {
+  return (logChannel ??= vscode.window.createOutputChannel("Devin Session Exporter"));
+}
 
 function readOptions(): ExportOptions {
   const c = vscode.workspace.getConfiguration("devinExporter");
@@ -27,33 +32,32 @@ function readOptions(): ExportOptions {
     showSessionInfo: c.get<boolean>("showSessionInfo", true),
     showRoleHeading: c.get<boolean>("showRoleHeading", true),
     showTimestamp: c.get<boolean>("showTimestamp", true),
-    userLabel: c.get<string>("userLabel", "用户"),
+    userLabel: c.get<string>("userLabel", "User"),
     assistantLabel: c.get<string>("assistantLabel", "Devin"),
-    incremental: c.get<boolean>("incrementalExport", false),
-    forceExportWal: c.get<boolean>("forceExportWal", false)
+    incremental: c.get<boolean>("incrementalExport", false)
   };
 }
 
 function ago(ms: number): string {
   const m = Math.floor((Date.now() - ms) / 60000);
-  if (m < 1) return "刚刚";
-  if (m < 60) return `${m} 分钟前`;
+  if (m < 1) return "just now";
+  if (m < 60) return `${m}m ago`;
   const h = Math.floor(m / 60);
-  if (h < 24) return `${h} 小时前`;
+  if (h < 24) return `${h}h ago`;
   const d = Math.floor(h / 24);
-  if (d < 30) return `${d} 天前`;
+  if (d < 30) return `${d}d ago`;
   return new Date(ms).toLocaleDateString();
 }
 
 async function configureAndGetOptions(): Promise<ExportOptions | undefined> {
   const options = readOptions();
   const picks = await vscode.window.showQuickPick([
-    { label: "$(account) 用户消息", description: "user_message", picked: options.includeUser, key: "user" },
-    { label: "$(sparkle) Devin 回复", description: "agent_message", picked: options.includeAssistant, key: "assistant" },
-    { label: "$(brain) Agent 思考", description: "agent_thought", picked: options.includeThoughts, key: "thought" },
-    { label: "$(tools) 工具调用", description: "tool_call", picked: options.includeToolCalls, key: "tool" },
-    { label: "$(code) 未识别类型", description: "以原始 JSON 记录导出", picked: options.includeUnknown, key: "unknown" }
-  ], { canPickMany: true, title: "配置向导：选择要导出的消息类型（设置会保存，后续可在侧边栏随时修改）", placeHolder: "可多选；不选择任何项则导出空消息列表" });
+    { label: "$(account) User messages", description: "user_message", picked: options.includeUser, key: "user" },
+    { label: "$(sparkle) Devin messages", description: "agent_message", picked: options.includeAssistant, key: "assistant" },
+    { label: "$(brain) Devin thoughts", description: "agent_thought", picked: options.includeThoughts, key: "thought" },
+    { label: "$(tools) Tool calls", description: "tool_call", picked: options.includeToolCalls, key: "tool" },
+    { label: "$(code) Other kinds", description: "Exported as raw JSON", picked: options.includeUnknown, key: "unknown" }
+  ], { canPickMany: true, title: "Setup: choose message types to export (saved; editable in the sidebar)", placeHolder: "Multi-select; selecting none exports nothing" });
 
   if (!picks) return undefined;
   options.includeUser = picks.some(p => p.key === "user");
@@ -65,42 +69,40 @@ async function configureAndGetOptions(): Promise<ExportOptions | undefined> {
   const formats = await vscode.window.showQuickPick([
     { label: "Markdown", key: "md", picked: options.writeMarkdown },
     { label: "JSON", key: "json", picked: options.writeJson },
-    { label: "HTML（单文件网页）", key: "html", picked: options.writeHtml }
-  ], { canPickMany: true, title: "选择导出格式", placeHolder: "可多选" });
+    { label: "HTML (single-file page)", key: "html", picked: options.writeHtml }
+  ], { canPickMany: true, title: "Choose export formats", placeHolder: "Multi-select" });
   if (!formats?.length) return undefined;
   options.writeMarkdown = formats.some(f => f.key === "md");
   options.writeJson = formats.some(f => f.key === "json");
   options.writeHtml = formats.some(f => f.key === "html");
 
   const display = await vscode.window.showQuickPick([
-    { label: "Session 信息", description: "文档头部的 Session ID、消息数", picked: options.showSessionInfo, key: "session" },
-    { label: "角色标题", description: `## ${options.userLabel} / ## ${options.assistantLabel}`, picked: options.showRoleHeading, key: "role" },
-    { label: "时间戳", description: "每条消息的时间", picked: options.showTimestamp, key: "ts" },
-    { label: "增量导出", description: "跳过自上次导出后没有新消息的会话", picked: options.incremental, key: "incremental" },
-    { label: "强制导出 WAL 会话", description: "数据库有未落盘数据的会话也照常导出（内容可能不是最新）", picked: options.forceExportWal, key: "wal" }
-  ], { canPickMany: true, title: "选择导出内容显示项", placeHolder: "可多选；不选择任何项则只导出纯文本对话" });
+    { label: "Session info", description: "Session ID and message count at the top", picked: options.showSessionInfo, key: "session" },
+    { label: "Role headings", description: `## ${options.userLabel} / ## ${options.assistantLabel}`, picked: options.showRoleHeading, key: "role" },
+    { label: "Timestamps", description: "Timestamp for each message", picked: options.showTimestamp, key: "ts" },
+    { label: "Incremental export", description: "Skip sessions with no new messages since last export", picked: options.incremental, key: "incremental" }
+  ], { canPickMany: true, title: "Choose what to include in exports", placeHolder: "Multi-select; selecting none exports plain text only" });
   if (!display) return undefined;
   options.showSessionInfo = display.some(p => p.key === "session");
   options.showRoleHeading = display.some(p => p.key === "role");
   options.showTimestamp = display.some(p => p.key === "ts");
   options.incremental = display.some(p => p.key === "incremental");
-  options.forceExportWal = display.some(p => p.key === "wal");
 
   const labels = await vscode.window.showInputBox({
-    title: "自定义角色显示名",
-    prompt: "格式：用户显示名,Devin显示名（英文或中文逗号分隔）",
+    title: "Custom role display names",
+    prompt: "Format: user name,Devin name",
     value: `${options.userLabel},${options.assistantLabel}`,
-    placeHolder: "用户,Devin"
+    placeHolder: "User,Devin"
   });
   if (labels === undefined) return undefined;
   const [u, a] = labels.split(/[,，]/);
-  options.userLabel = u?.trim() || "用户";
+  options.userLabel = u?.trim() || "User";
   options.assistantLabel = a?.trim() || "Devin";
 
   const defaultName = options.filenameTemplate;
   const custom = await vscode.window.showInputBox({
-    title: "自定义导出文件名",
-    prompt: "可输入固定名称，或使用 {sessionId}、{date}、{index}、{name}。多 Session 时建议使用 {sessionId} 避免重名。",
+    title: "Custom export filename",
+    prompt: "Fixed name, or tokens {sessionId}, {date}, {index}, {name}. Use {sessionId} to avoid collisions.",
     value: defaultName,
     placeHolder: "{sessionId}"
   });
@@ -127,14 +129,12 @@ async function persistOptions(options: ExportOptions): Promise<void> {
     c.update("showTimestamp", options.showTimestamp, g),
     c.update("userLabel", options.userLabel, g),
     c.update("assistantLabel", options.assistantLabel, g),
-    c.update("incrementalExport", options.incremental, g),
-    c.update("forceExportWal", options.forceExportWal, g)
+    c.update("incrementalExport", options.incremental, g)
   ]);
   await extensionContext.globalState.update(CONFIGURED_KEY, true);
 }
 
 const SCAN_CACHE_KEY = "devinExporter.scanCache";
-let lastWalWarnCount = -1;
 
 type ScanMeta = {
   title?: string; userCount: number; assistantCount: number; total: number;
@@ -144,7 +144,7 @@ type ScanMeta = {
 async function scanSessions(): Promise<SessionInfo[]> {
   const dbs = findDatabases();
   if (!dbs.length) {
-    vscode.window.showWarningMessage("没有找到 Devin ACP 数据库。可在设置 devinExporter.databaseDirectory 中指定目录。");
+    vscode.window.showWarningMessage("No Devin ACP databases found. Set devinExporter.databaseDirectory to point at them.");
     return [];
   }
   const cache = extensionContext.globalState.get<Record<string,
@@ -155,7 +155,7 @@ async function scanSessions(): Promise<SessionInfo[]> {
   let cacheHits = 0;
   await vscode.window.withProgress({
     location: vscode.ProgressLocation.Notification,
-    title: "正在扫描 Devin Sessions",
+    title: "Scanning Devin sessions",
     cancellable: false
   }, async progress => {
     await Promise.all(dbs.map(async dbPath => {
@@ -181,20 +181,15 @@ async function scanSessions(): Promise<SessionInfo[]> {
           });
         }
       } catch (e) {
-        console.warn(`跳过数据库 ${dbPath}`, e);
+        console.warn(`Skipping database ${dbPath}`, e);
       }
       progress.report({ message: `${++done}/${dbs.length}` });
     }));
   });
   await extensionContext.globalState.update(SCAN_CACHE_KEY, cache);
-  console.log(`[Devin Session Exporter] 扫描完成：${found.length} 个会话，缓存命中 ${cacheHits}/${dbs.length}`);
-  const walCount = found.filter(s => s.hasWal).length;
-  if (walCount && walCount !== lastWalWarnCount) {
-    lastWalWarnCount = walCount;
-    vscode.window.showWarningMessage(
-      `${walCount} 个会话的数据库有未落盘的最新消息（WAL），导出的内容可能不完整。建议先重启 Devin 或稍后再导出。`
-    );
-  }
+  console.log(`[Devin Session Exporter] Scan complete: ${found.length} sessions, ${cacheHits}/${dbs.length} cache hits`);
+  log().appendLine(`[${new Date().toLocaleString()}] scan: ${found.length} sessions from ${dbs.length} databases`);
+  // WAL data is read live via node:sqlite — no staleness warning needed.
   found.sort((a, b) => a.id.localeCompare(b.id));
   cachedSessions = found;
   sessionsProvider?.setSessions(found);
@@ -207,16 +202,16 @@ type SessionPick = vscode.QuickPickItem & { session: SessionInfo };
 
 async function selectSessions(sessions: SessionInfo[]): Promise<SessionInfo[] | undefined> {
   let sortDesc = extensionContext.globalState.get<boolean>(SORT_DESC_KEY, true);
-  const btnDesc: vscode.QuickInputButton = { iconPath: new vscode.ThemeIcon("arrow-down"), tooltip: "当前：按修改时间新→旧（点击切换为旧→新）" };
-  const btnAsc: vscode.QuickInputButton = { iconPath: new vscode.ThemeIcon("arrow-up"), tooltip: "当前：按修改时间旧→新（点击切换为新→旧）" };
+  const btnDesc: vscode.QuickInputButton = { iconPath: new vscode.ThemeIcon("arrow-down"), tooltip: "Newest first (click for oldest first)" };
+  const btnAsc: vscode.QuickInputButton = { iconPath: new vscode.ThemeIcon("arrow-up"), tooltip: "Oldest first (click for newest first)" };
 
-  const btnAll: vscode.QuickInputButton = { iconPath: new vscode.ThemeIcon("checklist"), tooltip: "全选 / 全不选" };
+  const btnAll: vscode.QuickInputButton = { iconPath: new vscode.ThemeIcon("checklist"), tooltip: "Select all / none" };
 
   return new Promise(resolve => {
     const qp = vscode.window.createQuickPick<SessionPick>();
     qp.canSelectMany = true;
-    qp.title = "选择要导出的 Session";
-    qp.placeholder = "支持多选；输入可筛选标题、ID 或路径";
+    qp.title = "Select sessions to export";
+    qp.placeholder = "Multi-select; type to filter by title, ID, or path";
     qp.matchOnDescription = true;
     qp.matchOnDetail = true;
 
@@ -225,8 +220,8 @@ async function selectSessions(sessions: SessionInfo[]): Promise<SessionInfo[] | 
       const sorted = [...sessions].sort((a, b) => sortDesc ? b.mtime - a.mtime : a.mtime - b.mtime);
       qp.items = sorted.map(s => ({
         label: `${s.hasWal ? "$(warning) " : ""}${s.title || s.snippet || s.id}`,
-        description: `用户 ${s.userCount} 条 · Devin ${s.assistantCount} 条 · ${ago(s.mtime)}`,
-        detail: `ID: ${s.id}\n${s.dbPath}${s.snippet ? `\n首条消息：${s.snippet}` : ""}`,
+        description: `${s.userCount} user · ${s.assistantCount} Devin · ${ago(s.mtime)}`,
+        detail: `ID: ${s.id}\n${s.dbPath}${s.snippet ? `\nFirst message: ${s.snippet}` : ""}`,
         picked: keep.has(s.id),
         session: s
       }));
@@ -268,24 +263,15 @@ async function doExport(sessions: SessionInfo[]) {
   const allFiles: string[] = [];
   const positions = extensionContext.globalState.get<Record<string, number>>(EXPORTED_POS_KEY, {});
   let skipped = 0;
-  let walSkipped = 0;
   const failures: string[] = [];
   await vscode.window.withProgress({
     location: vscode.ProgressLocation.Notification,
-    title: "正在导出 Devin Sessions",
+    title: "Exporting Devin sessions",
     cancellable: false
   }, async progress => {
     for (let i = 0; i < sessions.length; i++) {
       const s = sessions[i];
       progress.report({ message: `${i + 1}/${sessions.length}` });
-      // Re-check WAL state at export time — the scan-time flag can be stale
-      // (Devin may have checkpointed the WAL since the last scan).
-      const walStat = await fs.promises.stat(`${s.dbPath}-wal`).catch(() => undefined);
-      const hasWalNow = !!walStat && walStat.size > 0;
-      if (hasWalNow && !options.forceExportWal) {
-        walSkipped++;
-        continue;
-      }
       try {
         const data = await readSession(s.dbPath);
         const maxPos = data.messages.reduce((m, x) => Math.max(m, x.position), 0);
@@ -302,41 +288,53 @@ async function doExport(sessions: SessionInfo[]) {
   });
   await extensionContext.globalState.update(EXPORTED_POS_KEY, positions);
   if (failures.length) {
-    console.warn("[Devin Session Exporter] 导出失败：\n" + failures.join("\n"));
-    const detail = failures.slice(0, 3).join("\n") + (failures.length > 3 ? `\n…共 ${failures.length} 条` : "");
+    console.warn("[Devin Session Exporter] Export failed:\n" + failures.join("\n"));
+    const detail = failures.slice(0, 3).join("\n") + (failures.length > 3 ? `\n…${failures.length} total` : "");
     const act = await vscode.window.showErrorMessage(
-      `${failures.length} 个会话导出失败`,
-      "查看详情", "复制详情"
+      `${failures.length} sessions failed to export`,
+      "Show details", "Copy details"
     );
-    if (act === "查看详情") {
+    if (act === "Show details") {
       vscode.window.showInformationMessage(detail, { modal: true });
-    } else if (act === "复制详情") {
+    } else if (act === "Copy details") {
       await vscode.env.clipboard.writeText(failures.join("\n"));
     }
   }
-  const skippedTotal = skipped + walSkipped;
-  if (!allFiles.length && skippedTotal) {
+  if (!allFiles.length && skipped) {
+    log().appendLine(`[${new Date().toLocaleString()}] ${skipped} sessions skipped (no new messages since last export)`);
     vscode.window.showInformationMessage(
-      `没有需要导出的新消息，${skippedTotal} 个会话已跳过${walSkipped ? `（其中 ${walSkipped} 个含未落盘 WAL 数据，可在设置中开启"强制导出 WAL 会话"）` : ""}。`
+      `No new messages; ${skipped} sessions skipped.`
     );
     return;
   }
-  const notes = [
-    skipped ? `${skipped} 个无新消息` : "",
-    walSkipped ? `${walSkipped} 个含 WAL 数据` : ""
-  ].filter(Boolean).join("、");
-  const skipNote = notes ? `，跳过 ${notes}` : "";
-  const single = allFiles.length === 1;
+  const skipNote = skipped ? `, skipped ${skipped} with no new messages` : "";
+  log().appendLine(`[${new Date().toLocaleString()}] export → ${outputDir}`);
+  for (const f of allFiles) log().appendLine(`  wrote ${f}`);
+  if (!allFiles.length) return;
+  const singleSession = sessions.length - skipped - failures.length === 1;
+  const msg = singleSession
+    ? `Exported ${allFiles.length} file(s) → ${outputDir}`
+    : `Exported ${sessions.length - skipped - failures.length} sessions (${allFiles.length} files) → ${outputDir}${skipNote}`;
   const action = await vscode.window.showInformationMessage(
-    `导出完成：${sessions.length - skippedTotal - failures.length} 个 Session，${allFiles.length} 个文件${skipNote}。目录：${outputDir}`,
-    ...(single ? ["打开文件", "复制内容", "打开导出目录"] : ["打开导出目录"])
+    msg,
+    ...(singleSession
+      ? ["Reveal in Finder", "Copy content", "Open folder"]
+      : ["Reveal in Finder", "Open folder", "View log"])
   );
-  if (action === "打开文件") await vscode.window.showTextDocument(vscode.Uri.file(allFiles[0]));
-  else if (action === "复制内容") {
-    await vscode.env.clipboard.writeText(await fs.promises.readFile(allFiles[0], "utf8"));
-    vscode.window.showInformationMessage("已复制导出内容到剪贴板。");
+  if (singleSession) {
+    // open the first file right away — the editor tab shows exactly where it landed
+    await vscode.window.showTextDocument(vscode.Uri.file(allFiles[0]));
   }
-  else if (action) await vscode.commands.executeCommand("devinExporter.openFolder");
+  if (action === "Reveal in Finder") {
+    await vscode.commands.executeCommand("revealFileInOS", vscode.Uri.file(allFiles[0]));
+  } else if (action === "Copy content") {
+    await vscode.env.clipboard.writeText(await fs.promises.readFile(allFiles[0], "utf8"));
+    vscode.window.showInformationMessage("Export copied to clipboard.");
+  } else if (action === "Open folder") {
+    await vscode.commands.executeCommand("devinExporter.openFolder");
+  } else if (action === "View log") {
+    log().show();
+  }
 }
 
 const messageCache = new Map<string, { mtime: number; messages: ExportMessage[] }>();
@@ -369,8 +367,8 @@ async function searchMessagesCommand(): Promise<void> {
   const qp = vscode.window.createQuickPick<SearchPick>();
   qp.canSelectMany = true;
   qp.busy = true;
-  qp.title = "搜索会话内容";
-  qp.placeholder = `正在加载会话 0/${sessions.length}…`;
+  qp.title = "Search session messages";
+  qp.placeholder = `Loading sessions 0/${sessions.length}…`;
   qp.matchOnDescription = true;
 
   const applyFilter = () => {
@@ -384,7 +382,7 @@ async function searchMessagesCommand(): Promise<void> {
       const start = Math.max(0, idx - 40);
       items.push({
         label: session.title || session.snippet || session.id,
-        description: message.role === "user" ? "用户" : message.role === "assistant" ? "Devin" : message.kind,
+        description: message.role === "user" ? "User" : message.role === "assistant" ? "Devin" : message.kind,
         detail: (start > 0 ? "…" : "") + message.text.slice(start, idx + kw.length + 60).replace(/\s+/g, " ") + "…",
         session
       });
@@ -419,11 +417,11 @@ async function searchMessagesCommand(): Promise<void> {
       } catch { /* skip unreadable db */ }
       loaded++;
       if (disposed) break;
-      qp.placeholder = `已加载 ${loaded}/${sessions.length} 个会话，输入关键词实时搜索，勾选导出`;
+      qp.placeholder = `Loaded ${loaded}/${sessions.length} sessions — type to search, check to export`;
       applyFilter();
     }
     qp.busy = false;
-    if (!loaded) qp.placeholder = "没有可搜索的消息";
+    if (!loaded) qp.placeholder = "No messages to search";
   })();
 
   await done;
@@ -435,12 +433,12 @@ async function previewSession(s: SessionInfo): Promise<void> {
   try {
     prepared = prepareMessages(await sessionMessages(s), options);
   } catch (e) {
-    vscode.window.showErrorMessage(`无法读取会话：${e instanceof Error ? e.message : String(e)}`);
+    vscode.window.showErrorMessage(`Could not read session: ${e instanceof Error ? e.message : String(e)}`);
     return;
   }
   const panel = vscode.window.createWebviewPanel(
     "devinSessionPreview",
-    `预览：${s.title || s.snippet || s.id}`,
+    `Preview: ${s.title || s.snippet || s.id}`,
     vscode.ViewColumn.Beside
   );
   panel.webview.html = renderHtml(s, prepared, options);
@@ -459,9 +457,9 @@ class SessionsProvider implements vscode.TreeDataProvider<SessionInfo> {
 
   getTreeItem(s: SessionInfo): vscode.TreeItem {
     const item = new vscode.TreeItem(s.title || s.snippet || s.id);
-    item.description = `用户${s.userCount} · Devin${s.assistantCount} · ${ago(s.mtime)}`;
+    item.description = `${s.userCount} user · ${s.assistantCount} Devin · ${ago(s.mtime)}`;
     item.tooltip = new vscode.MarkdownString(
-      `**ID**: \`${s.id}\`\n\n\`${s.dbPath}\`${s.snippet ? `\n\n> ${s.snippet}` : ""}${s.hasWal ? `\n\n$(warning) 有未落盘的最新消息` : ""}`
+      `**ID**: \`${s.id}\`\n\n\`${s.dbPath}\`${s.snippet ? `\n\n> ${s.snippet}` : ""}${s.hasWal ? `\n\n$(warning) session still writing — includes latest messages` : ""}`
     );
     item.iconPath = new vscode.ThemeIcon(s.hasWal ? "warning" : "comment-discussion");
     item.contextValue = "devinSession";
@@ -501,15 +499,15 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand("devinExporter.exportAll", async () => {
       const sessions = await scanSessions();
       if (!sessions.length) {
-        vscode.window.showInformationMessage("没有识别到可导出的 Session。");
+        vscode.window.showInformationMessage("No exportable sessions found.");
         return;
       }
       const confirm = await vscode.window.showWarningMessage(
-        `即将导出全部 ${sessions.length} 个会话到 ${getExportDirectory()}，确认继续？`,
+        `Export all ${sessions.length} sessions to ${getExportDirectory()}?`,
         { modal: true },
-        "导出"
+        "Export"
       );
-      if (confirm === "导出") await doExport(sessions);
+      if (confirm === "Export") await doExport(sessions);
     }),
     vscode.commands.registerCommand("devinExporter.toggleSetting", async (key: string) => {
       const c = vscode.workspace.getConfiguration("devinExporter");
@@ -519,7 +517,7 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand("devinExporter.editSetting", async (key: string, prompt: string) => {
       const c = vscode.workspace.getConfiguration("devinExporter");
       const value = await vscode.window.showInputBox({
-        title: `设置 ${key}`,
+        title: `Set ${key}`,
         prompt,
         value: c.get<string>(key, "")
       });
@@ -530,17 +528,18 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand("devinExporter.scanAndExport", async () => {
       const sessions = await scanSessions();
       if (sessions.length) await doExport((await selectSessions(sessions)) || []);
-      else vscode.window.showInformationMessage("没有识别到包含 user_message / agent_message 文本的 Session。");
+      else vscode.window.showInformationMessage("No sessions containing user/agent messages found.");
     }),
     vscode.commands.registerCommand("devinExporter.exportSelected", async () => {
       const sessions = cachedSessions.length ? cachedSessions : await scanSessions();
       if (sessions.length) await doExport((await selectSessions(sessions)) || []);
+      else vscode.window.showInformationMessage("No exportable sessions found.");
     }),
     vscode.commands.registerCommand("devinExporter.configureExport", async () => {
       const options = await configureAndGetOptions();
       if (!options) return;
       await persistOptions(options);
-      vscode.window.showInformationMessage("导出偏好已保存，后续导出将直接使用这些设置。");
+      vscode.window.showInformationMessage("Export preferences saved.");
     }),
     vscode.commands.registerCommand("devinExporter.openFolder", async () => {
       const dir = getExportDirectory();
@@ -556,6 +555,7 @@ export function activate(context: vscode.ExtensionContext) {
       if (item) return doExport([item]);
       const sessions = cachedSessions.length ? cachedSessions : await scanSessions();
       if (sessions.length) await doExport((await selectSessions(sessions)) || []);
+      else vscode.window.showInformationMessage("No exportable sessions found.");
     }),
     vscode.commands.registerCommand("devinExporter.searchMessages", searchMessagesCommand),
     vscode.commands.registerCommand("devinExporter.previewSession", async (item?: SessionInfo) => {
@@ -564,7 +564,7 @@ export function activate(context: vscode.ExtensionContext) {
     }),
     vscode.commands.registerCommand("devinExporter.copySessionId", async (item: SessionInfo) => {
       await vscode.env.clipboard.writeText(item.id);
-      vscode.window.showInformationMessage(`已复制 Session ID：${item.id}`);
+      vscode.window.showInformationMessage(`Copied session ID: ${item.id}`);
     }),
     vscode.commands.registerCommand("devinExporter.revealDatabase", async (item: SessionInfo) => {
       await vscode.commands.executeCommand("revealFileInOS", vscode.Uri.file(item.dbPath));

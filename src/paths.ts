@@ -6,12 +6,15 @@ import * as vscode from "vscode";
 export function findDatabases(): string[] {
   const cfg = vscode.workspace.getConfiguration("devinExporter");
   const configured = cfg.get<string>("databaseDirectory", "").trim();
+  const appSupport =
+    process.platform === "darwin"
+      ? path.join(os.homedir(), "Library", "Application Support")
+      : process.platform === "win32"
+        ? process.env.APPDATA || path.join(os.homedir(), "AppData", "Roaming")
+        : process.env.XDG_CONFIG_HOME || path.join(os.homedir(), ".config");
   const roots = configured
     ? [configured]
-    : [
-        path.join(process.env.APPDATA || path.join(os.homedir(), "AppData", "Roaming"), "Devin", "User", "acp-messages"),
-        path.join(process.env.APPDATA || path.join(os.homedir(), "AppData", "Roaming"), "devin", "User", "acp-messages")
-      ];
+    : ["Devin", "devin"].map(name => path.join(appSupport, name, "User", "acp-messages"));
   const found: string[] = [];
   const visited = new Set<string>();
 

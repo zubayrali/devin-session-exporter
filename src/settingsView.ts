@@ -4,53 +4,52 @@ type Node = { item: vscode.TreeItem; children?: Node[] };
 
 const BOOL_GROUPS: Array<{ section: string; icon: string; items: Array<{ key: string; label: string; def: boolean }> }> = [
   {
-    section: "消息类型", icon: "filter",
+    section: "Message types", icon: "filter",
     items: [
-      { key: "includeUser", label: "用户消息", def: true },
-      { key: "includeAssistant", label: "Devin 回复", def: true },
-      { key: "includeThoughts", label: "Agent 思考", def: false },
-      { key: "includeToolCalls", label: "工具调用", def: false },
-      { key: "includeUnknown", label: "未识别类型", def: false }
+      { key: "includeUser", label: "User messages", def: true },
+      { key: "includeAssistant", label: "Devin messages", def: true },
+      { key: "includeThoughts", label: "Devin thoughts", def: false },
+      { key: "includeToolCalls", label: "Tool calls", def: false },
+      { key: "includeUnknown", label: "Other kinds", def: false }
     ]
   },
   {
-    section: "输出格式", icon: "file",
+    section: "Output formats", icon: "file",
     items: [
       { key: "writeMarkdown", label: "Markdown", def: true },
-      { key: "writeHtml", label: "HTML 单文件网页", def: false },
+      { key: "writeHtml", label: "HTML (single file)", def: false },
       { key: "writeJson", label: "JSON", def: true }
     ]
   },
   {
-    section: "Markdown 显示", icon: "markdown",
+    section: "Markdown display", icon: "markdown",
     items: [
-      { key: "showSessionInfo", label: "Session 信息头", def: true },
-      { key: "showRoleHeading", label: "角色标题", def: true },
-      { key: "showTimestamp", label: "时间戳", def: true }
+      { key: "showSessionInfo", label: "Session info header", def: true },
+      { key: "showRoleHeading", label: "Role headings", def: true },
+      { key: "showTimestamp", label: "Timestamps", def: true }
     ]
   },
   {
-    section: "行为", icon: "settings-gear",
+    section: "Behavior", icon: "settings-gear",
     items: [
-      { key: "incrementalExport", label: "增量导出", def: false },
-      { key: "forceExportWal", label: "强制导出 WAL 会话", def: false }
+      { key: "incrementalExport", label: "Incremental export", def: false }
     ]
   }
 ];
 
 const TEXT_SETTINGS: Array<{ key: string; label: string; prompt: string }> = [
-  { key: "filenameTemplate", label: "文件名模板", prompt: "支持 {sessionId}、{date}、{index}、{name}" },
-  { key: "userLabel", label: "用户显示名", prompt: "Markdown/HTML 中用户消息的显示名" },
-  { key: "assistantLabel", label: "Devin 显示名", prompt: "Markdown/HTML 中 Devin 消息的显示名" },
-  { key: "exportDirectory", label: "导出目录", prompt: "留空使用 Documents/Devin-Exports" },
-  { key: "databaseDirectory", label: "数据库目录", prompt: "留空自动检测 %APPDATA%/Devin" }
+  { key: "filenameTemplate", label: "Filename template", prompt: "Tokens: {sessionId}, {date}, {index}, {name}" },
+  { key: "userLabel", label: "User display name", prompt: "Label for user messages in exports" },
+  { key: "assistantLabel", label: "Devin display name", prompt: "Label for Devin messages in exports" },
+  { key: "exportDirectory", label: "Export directory", prompt: "Blank = Documents/Devin-Exports" },
+  { key: "databaseDirectory", label: "Database directory", prompt: "Blank = auto-detect" }
 ];
 
 const ACTIONS: Array<{ label: string; icon: string; command: string }> = [
-  { label: "扫描并导出会话…", icon: "play", command: "devinExporter.scanAndExport" },
-  { label: "导出全部会话", icon: "export", command: "devinExporter.exportAll" },
-  { label: "搜索会话内容…", icon: "search", command: "devinExporter.searchMessages" },
-  { label: "打开导出目录", icon: "folder-opened", command: "devinExporter.openFolder" }
+  { label: "Scan & export sessions…", icon: "play", command: "devinExporter.scanAndExport" },
+  { label: "Export all sessions", icon: "export", command: "devinExporter.exportAll" },
+  { label: "Search messages…", icon: "search", command: "devinExporter.searchMessages" },
+  { label: "Open export folder", icon: "folder-opened", command: "devinExporter.openFolder" }
 ];
 
 export function boolSettingDefault(key: string): boolean {
@@ -97,7 +96,7 @@ export class SettingsProvider implements vscode.TreeDataProvider<Node> {
       return { item };
     };
 
-    const actions = section("操作", "rocket", ACTIONS.map(a =>
+    const actions = section("Actions", "rocket", ACTIONS.map(a =>
       leaf(a.label, new vscode.ThemeIcon(a.icon), { command: a.command, title: a.label })
     ));
 
@@ -107,18 +106,18 @@ export class SettingsProvider implements vscode.TreeDataProvider<Node> {
         label,
         new vscode.ThemeIcon(v ? "pass-filled" : "circle-large-outline", v ? green : gray),
         { command: "devinExporter.toggleSetting", title: label, arguments: [key] },
-        v ? "开" : "关"
+        v ? "On" : "Off"
       );
     })));
 
-    const params = section("参数", "symbol-field", TEXT_SETTINGS.map(({ key, label, prompt }) => {
+    const params = section("Parameters", "symbol-field", TEXT_SETTINGS.map(({ key, label, prompt }) => {
       const v = c.get<string>(key, "").trim();
       return leaf(
         label,
         new vscode.ThemeIcon("edit", gray),
         { command: "devinExporter.editSetting", title: label, arguments: [key, prompt] },
-        v || "默认",
-        `${label}: ${v || "（未设置）"}`
+        v || "Default",
+        `${label}: ${v || "(not set)"}`
       );
     }));
 
